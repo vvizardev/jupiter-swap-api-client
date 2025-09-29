@@ -17,6 +17,7 @@ pub mod transaction_config;
 pub struct JupiterSwapApiClient {
     pub base_path: String,
     client: Client,
+    api_key: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -50,7 +51,7 @@ async fn check_status_code_and_deserialize<T: DeserializeOwned>(
 }
 
 impl JupiterSwapApiClient {
-    pub fn new(base_path: String) -> Self {
+    pub fn new(base_path: String, api_key: Option<String>) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10))
@@ -59,20 +60,31 @@ impl JupiterSwapApiClient {
             .http2_adaptive_window(true)
             .build()
             .expect("Failed to create HTTP client");
-        
-        Self { base_path, client }
+
+        Self {
+            base_path,
+            client,
+            api_key,
+        }
     }
 
     pub async fn quote(&self, quote_request: &QuoteRequest) -> Result<QuoteResponse, ClientError> {
         let url = format!("{}/quote", self.base_path);
         let extra_args = quote_request.quote_args.clone();
         let internal_quote_request = InternalQuoteRequest::from(quote_request.clone());
-        let response = self.client
-            .get(url)
+        
+        let mut req = self
+            .client
+            .get(&url)
             .query(&internal_quote_request)
-            .query(&extra_args)
-            .send()
-            .await?;
+            .query(&extra_args);
+
+        if let Some(ref key) = self.api_key {
+            req = req.header("x-api-key", key); // or "Authorization: Bearer <key>" depending on the API
+        }
+
+        let response = req.send().await?;
+
         check_status_code_and_deserialize(response).await
     }
 
@@ -81,7 +93,8 @@ impl JupiterSwapApiClient {
         swap_request: &SwapRequest,
         extra_args: Option<HashMap<String, String>>,
     ) -> Result<SwapResponse, ClientError> {
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/swap", self.base_path))
             .query(&extra_args)
             .json(swap_request)
@@ -94,7 +107,8 @@ impl JupiterSwapApiClient {
         &self,
         swap_request: &SwapRequest,
     ) -> Result<SwapInstructionsResponse, ClientError> {
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/swap-instructions", self.base_path))
             .json(swap_request)
             .send()
